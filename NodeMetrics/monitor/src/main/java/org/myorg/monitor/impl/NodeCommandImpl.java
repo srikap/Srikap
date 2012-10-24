@@ -1,6 +1,7 @@
 package org.myorg.monitor.impl;
 
 import org.apache.log4j.Logger;
+import org.json.simple.JSONObject;
 import org.myorg.db.MetricsDAO;
 import org.myorg.db.RequestStatus;
 import org.myorg.monitor.NodeCommand;
@@ -14,51 +15,80 @@ import com.sun.jersey.api.client.WebResource;
  * @author srikap
  *
  */
+@SuppressWarnings("unchecked")
 public class NodeCommandImpl implements NodeCommand, Runnable{
 	//number of retries to connect to the remote node.
 	private static final int retryCount = 3;
 	private Logger logger = Logger.getLogger(NodeCommandImpl.class);
+	private final static String REQUEST_TYPE = "metrics";
+	private final static String STATUS = "Status";
+	
 	//Failure status message
-	protected static final String FAILURE_MESSAGE = "{\"status\":\"Not reachable\"}";
+	@SuppressWarnings("unchecked")
+	protected static final String FAILURE_MESSAGE;
+	static {
+		JSONObject failureMsg = new JSONObject();
+		failureMsg.put(STATUS, "Not Reachable");
+		FAILURE_MESSAGE = failureMsg.toJSONString();
+	}
+	
 	//nodeName
 	private String nodeName = null;
 	@Inject	protected MetricsDAO metricsDAO = null;
+	
 	/* (non-Javadoc)
 	 * @see org.myorg.monitor.impl.NodeCommand#run()
 	 */
 	public void run() {
 		Client client = Client.create();
-		WebResource webResource = client.resource("http://" + getNodeName() + "/metrics");
+		//connect to remote node
+		WebResource webResource = client.resource("http://" + getNodeName() + REQUEST_TYPE);
 		int numberOfConnectAttempts = 0;
 
 		try {
+			// Try upto numberOfConnectAttempts.
 			while (numberOfConnectAttempts  < retryCount) {
 				ClientResponse response = webResource.accept("application/json").get(ClientResponse.class);
-				//SUCCESS
+				//Success
 				if (response.getStatus() == 200){
 					setStatus(response.getEntity(String.class), RequestStatus.COMPLETED);
 					return;
-
 				}
+				//Failure
 				logger.debug("Failed to connect to the node:" 
 						+ getNodeName() 
 						+ " Status:" 
 						+ response.getStatus());
+				
 				numberOfConnectAttempts++;
 				if (numberOfConnectAttempts < retryCount){
-					logger.debug("Retrying");
+					//Retry
+					logger.debug("Retrying ...");
 				} else {
 					//Failed to Connect
-					setStatus("{ \"status\" : \""  + response.getStatus() + "\" }", RequestStatus.FAILED);
+					setStatus(getJsonString(STATUS, "Could not connect after " + numberOfConnectAttempts + " attempts"), RequestStatus.FAILED);
 					return;
 				} 
 			}
 		} catch (Exception ex){
 			logger.error(ex.getMessage());
-			setStatus("{ \"status\" : \""  + ex.getMessage() + "\" }", RequestStatus.FAILED);
+			setStatus(getJsonString(STATUS, ex.getMessage()), RequestStatus.FAILED);
 			return;
 		}
 		setStatus( FAILURE_MESSAGE, RequestStatus.FAILED);
+	}
+	
+	/**
+	 * creates a json string rep.
+	 * @param key
+	 * @param value
+	 * @return
+	 */
+	@SuppressWarnings("unused")
+	private static String getJsonString(String key, String value){
+		JSONObject msgObject = new JSONObject();
+		msgObject.put(key, value);
+		return msgObject.toJSONString();
 	}
 
 	/**
